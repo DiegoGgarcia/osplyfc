@@ -1,305 +1,84 @@
-import { Component, OnInit, OnDestroy, inject, signal } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterModule, Router } from '@angular/router';
 import { MatCardModule } from '@angular/material/card';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
 import { MatToolbarModule } from '@angular/material/toolbar';
-import { MatMenuModule } from '@angular/material/menu';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { MatSnackBarModule } from '@angular/material/snack-bar';
+import { MatSnackBarModule, MatSnackBar } from '@angular/material/snack-bar';
 import { MatGridListModule } from '@angular/material/grid-list';
-import { MatDividerModule } from '@angular/material/divider';
-import { MatListModule } from '@angular/material/list';
-import { MatInputModule } from '@angular/material/input';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
-import { Subject } from 'rxjs';
-import { takeUntil, finalize } from 'rxjs/operators';
+import { MatChipsModule } from '@angular/material/chips';
+import { MatBadgeModule } from '@angular/material/badge';
+import { MatTooltipModule } from '@angular/material/tooltip';
 
-import { AuthService, ProcessMakerUser } from '../../core/services/auth.service';
-import { DashboardService, DashboardStats, ExpedienteType, RecentActivity } from '../../core/services/dashboard.service';
+import { Observable, Subscription, timer, combineLatest } from 'rxjs';
+import { map, takeUntil, startWith, catchError, switchMap } from 'rxjs/operators';
+import { Subject, of } from 'rxjs';
+
+import { DashboardService, DashboardStats, ExpedienteConfig, ActivityItem } from '../../core/services/dashboard.service';
+import { ProcessMakerService, ProcessMakerUser } from '../../core/services/processmaker.service';
 
 @Component({
   selector: 'app-dashboard',
   standalone: true,
   imports: [
     CommonModule,
+    RouterModule,
     MatCardModule,
     MatButtonModule,
     MatIconModule,
     MatToolbarModule,
-    MatMenuModule,
     MatProgressSpinnerModule,
     MatSnackBarModule,
     MatGridListModule,
-    MatDividerModule,
-    MatListModule,
-    MatInputModule,
-    MatFormFieldModule,
-    FormsModule
+    MatChipsModule,
+    MatBadgeModule,
+    MatTooltipModule
   ],
-  template: `
-    <div class="min-h-screen bg-gray-50">
-      <!-- Header -->
-      <mat-toolbar color="primary" class="shadow-md">
-        <span class="flex-1">
-          <mat-icon class="mr-2">local_hospital</mat-icon>
-          OsplyfC Dashboard
-        </span>
-        
-        <div class="flex items-center space-x-4">
-          <span class="text-sm">{{ currentUser()?.USR_FIRSTNAME }} {{ currentUser()?.USR_LASTNAME }}</span>
-          
-          <button mat-icon-button [matMenuTriggerFor]="userMenu">
-            <mat-icon>account_circle</mat-icon>
-          </button>
-          
-          <mat-menu #userMenu="matMenu">
-            <button mat-menu-item (click)="logout()">
-              <mat-icon>logout</mat-icon>
-              <span>Cerrar Sesión</span>
-            </button>
-          </mat-menu>
-        </div>
-      </mat-toolbar>
-
-      <!-- Main Content -->
-      <div class="container mx-auto p-6">
-        
-        <!-- Stats Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-          <mat-card class="stat-card">
-            <mat-card-content class="flex items-center p-6">
-              <div class="flex-1">
-                <p class="text-sm text-gray-600 mb-1">Total de Casos</p>
-                <p class="text-2xl font-bold text-gray-900">{{ stats()?.totalCases || 0 }}</p>
-              </div>
-              <mat-icon class="text-4xl text-blue-500">folder</mat-icon>
-            </mat-card-content>
-          </mat-card>
-
-          <mat-card class="stat-card">
-            <mat-card-content class="flex items-center p-6">
-              <div class="flex-1">
-                <p class="text-sm text-gray-600 mb-1">Casos Pendientes</p>
-                <p class="text-2xl font-bold text-gray-900">{{ stats()?.pendingCases || 0 }}</p>
-              </div>
-              <mat-icon class="text-4xl text-orange-500">pending_actions</mat-icon>
-            </mat-card-content>
-          </mat-card>
-
-          <mat-card class="stat-card">
-            <mat-card-content class="flex items-center p-6">
-              <div class="flex-1">
-                <p class="text-sm text-gray-600 mb-1">Completados Hoy</p>
-                <p class="text-2xl font-bold text-gray-900">{{ stats()?.completedToday || 0 }}</p>
-              </div>
-              <mat-icon class="text-4xl text-green-500">check_circle</mat-icon>
-            </mat-card-content>
-          </mat-card>
-
-          <mat-card class="stat-card">
-            <mat-card-content class="flex items-center p-6">
-              <div class="flex-1">
-                <p class="text-sm text-gray-600 mb-1">Casos Vencidos</p>
-                <p class="text-2xl font-bold text-gray-900">{{ stats()?.overdueCases || 0 }}</p>
-              </div>
-              <mat-icon class="text-4xl text-red-500">warning</mat-icon>
-            </mat-card-content>
-          </mat-card>
-        </div>
-
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          
-          <!-- Expedientes Grid -->
-          <div class="lg:col-span-2">
-            <mat-card>
-              <mat-card-header>
-                <mat-card-title class="flex items-center justify-between w-full">
-                  <span>Tipos de Expedientes</span>
-                  <button mat-icon-button (click)="refreshExpedientes()" [disabled]="loading()">
-                    <mat-icon>refresh</mat-icon>
-                  </button>
-                </mat-card-title>
-              </mat-card-header>
-              
-              <mat-card-content>
-                <!-- Search -->
-                <mat-form-field class="w-full mb-4" appearance="outline">
-                  <mat-label>Buscar expediente</mat-label>
-                  <input matInput [(ngModel)]="searchTerm" (input)="onSearch()" placeholder="Escriba para buscar...">
-                  <mat-icon matSuffix>search</mat-icon>
-                </mat-form-field>
-
-                <!-- Loading -->
-                <div *ngIf="loading()" class="flex justify-center p-8">
-                  <mat-spinner diameter="40"></mat-spinner>
-                </div>
-
-                <!-- Expedientes Grid -->
-                <div *ngIf="!loading()" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  <div 
-                    *ngFor="let expediente of filteredExpedientes(); trackBy: trackByExpediente"
-                    class="expediente-card"
-                    [class.disabled]="!expediente.enabled"
-                    (click)="startExpediente(expediente)"
-                  >
-                    <mat-card class="h-full cursor-pointer hover:shadow-lg transition-shadow">
-                      <mat-card-content class="p-4">
-                        <div class="flex items-start space-x-3">
-                          <mat-icon 
-                            [class]="'text-3xl text-' + expediente.color + '-500'"
-                            [attr.aria-label]="expediente.name"
-                          >
-                            {{ expediente.icon }}
-                          </mat-icon>
-                          
-                          <div class="flex-1 min-w-0">
-                            <h3 class="font-semibold text-gray-900 text-sm mb-1 truncate">
-                              {{ expediente.name }}
-                            </h3>
-                            <p class="text-xs text-gray-600 line-clamp-2">
-                              {{ expediente.description }}
-                            </p>
-                            
-                            <div *ngIf="!expediente.enabled" class="mt-2">
-                              <span class="inline-flex items-center px-2 py-1 rounded-full text-xs bg-gray-100 text-gray-600">
-                                Próximamente
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      </mat-card-content>
-                    </mat-card>
-                  </div>
-                </div>
-
-                <!-- No results -->
-                <div *ngIf="!loading() && filteredExpedientes().length === 0" class="text-center p-8">
-                  <mat-icon class="text-6xl text-gray-400 mb-4">search_off</mat-icon>
-                  <p class="text-gray-600">No se encontraron expedientes que coincidan con la búsqueda.</p>
-                </div>
-              </mat-card-content>
-            </mat-card>
-          </div>
-
-          <!-- Sidebar -->
-          <div class="space-y-6">
-            
-            <!-- Recent Activity -->
-            <mat-card>
-              <mat-card-header>
-                <mat-card-title>Actividad Reciente</mat-card-title>
-              </mat-card-header>
-              
-              <mat-card-content>
-                <div *ngIf="recentActivity().length === 0" class="text-center p-4">
-                  <mat-icon class="text-4xl text-gray-400 mb-2">inbox</mat-icon>
-                  <p class="text-gray-600 text-sm">No hay actividad reciente</p>
-                </div>
-                
-                <mat-list *ngIf="recentActivity().length > 0">
-                  <mat-list-item *ngFor="let activity of recentActivity().slice(0, 5)">
-                    <div class="w-full">
-                      <div class="flex justify-between items-start">
-                        <p class="font-medium text-sm text-gray-900 truncate">{{ activity.description }}</p>
-                      </div>
-                      <p class="text-xs text-gray-600 mt-1">
-                        {{ activity.type }} • {{ activity.date | date:'short' }}
-                      </p>
-                    </div>
-                  </mat-list-item>
-                </mat-list>
-              </mat-card-content>
-            </mat-card>
-
-            <!-- Quick Actions -->
-            <mat-card>
-              <mat-card-header>
-                <mat-card-title>Acciones Rápidas</mat-card-title>
-              </mat-card-header>
-              
-              <mat-card-content class="space-y-2">
-                <button 
-                  mat-raised-button 
-                  color="primary" 
-                  class="w-full"
-                  (click)="openProcessMaker()"
-                >
-                  <mat-icon>open_in_new</mat-icon>
-                  Abrir ProcessMaker
-                </button>
-                
-                <button 
-                  mat-stroked-button 
-                  class="w-full"
-                  (click)="refreshData()"
-                  [disabled]="loading()"
-                >
-                  <mat-icon>refresh</mat-icon>
-                  Actualizar Datos
-                </button>
-              </mat-card-content>
-            </mat-card>
-
-          </div>
-        </div>
-      </div>
-    </div>
-  `,
-  styles: [`
-    .stat-card {
-      transition: transform 0.2s ease-in-out;
-    }
-    
-    .stat-card:hover {
-      transform: translateY(-2px);
-    }
-    
-    .expediente-card:not(.disabled):hover {
-      transform: translateY(-2px);
-    }
-    
-    .expediente-card.disabled {
-      opacity: 0.6;
-      cursor: not-allowed;
-    }
-    
-    .expediente-card.disabled mat-card {
-      cursor: not-allowed;
-    }
-    
-    .line-clamp-2 {
-      display: -webkit-box;
-      -webkit-line-clamp: 2;
-      -webkit-box-orient: vertical;
-      overflow: hidden;
-    }
-  `]
+  templateUrl: './dashboard.component.html',
+  styleUrls: ['./dashboard.component.scss']
 })
 export class DashboardComponent implements OnInit, OnDestroy {
-  private readonly authService = inject(AuthService);
-  private readonly dashboardService = inject(DashboardService);
-  private readonly router = inject(Router);
-  private readonly destroy$ = new Subject<void>();
+  private destroy$ = new Subject<void>();
 
-  // Signals
-  currentUser = signal<ProcessMakerUser | null>(null);
-  stats = signal<DashboardStats | null>(null);
-  expedientes = signal<ExpedienteType[]>([]);
-  filteredExpedientes = signal<ExpedienteType[]>([]);
-  recentActivity = signal<RecentActivity[]>([]);
-  loading = signal<boolean>(false);
+  // Observables - inicializados en el constructor
+  dashboardStats$!: Observable<DashboardStats>;
+  availableExpedientes$!: Observable<ExpedienteConfig[]>;
+  recentActivity$!: Observable<ActivityItem[]>;
+  currentUser$!: Observable<ProcessMakerUser | null>;
 
-  // Properties
-  searchTerm = '';
+  // Estado del componente
+  isLoading = true;
+  private refreshInterval = 5 * 60 * 1000; // 5 minutos
+
+  constructor(
+    private dashboardService: DashboardService,
+    private processMakerService: ProcessMakerService,
+    private router: Router,
+    private snackBar: MatSnackBar
+  ) {
+    this.initializeObservables();
+    this.availableExpedientes$ = this.processMakerService.getProcesses().pipe(
+      map(processes =>
+        processes.map(p => ({
+          id: p.pro_uid,
+          title: p.pro_title,
+          description: p.pro_description,
+          icon: 'folder', // o algo dinámico
+          color: '#3f51b5' // o algo configurable
+        }))
+      ),
+      catchError(err => {
+        console.error('Error al obtener expedientes:', err);
+        return of([]);
+      })
+    );
+  }
 
   ngOnInit(): void {
-    this.loadUserData();
-    this.loadDashboardData();
-    this.loadExpedientes();
-    this.loadRecentActivity();
+    this.initializeData();
+    this.setupAutoRefresh();
   }
 
   ngOnDestroy(): void {
@@ -307,123 +86,199 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.destroy$.complete();
   }
 
-  private loadUserData(): void {
-    this.authService.currentUser$
-      .pipe(takeUntil(this.destroy$))
-      .subscribe(user => {
-        this.currentUser.set(user);
-      });
+  private initializeObservables(): void {
+    // Obtener usuario actual
+    this.currentUser$ = this.processMakerService.user$.pipe(
+      startWith(null),
+      catchError(error => {
+        console.error('Error obteniendo usuario actual:', error);
+        return of(null);
+      })
+    );
+
+    // Estadísticas del dashboard con auto-refresh
+    this.dashboardStats$ = timer(0, this.refreshInterval).pipe(
+      takeUntil(this.destroy$),
+      switchMap(() => this.dashboardService.getDashboardStats()),
+      catchError(error => {
+        console.error('Error obteniendo estadísticas:', error);
+        this.showError('Error al cargar estadísticas');
+        return of({
+          totalCases: 0,
+          myCases: 0,
+          completedToday: 0,
+          overdueCases: 0,
+          recentActivity: [],
+          expedienteStats: {}
+        });
+      })
+    );
+
+    // Actividad reciente
+    this.recentActivity$ = this.dashboardStats$.pipe(
+      map(stats => stats.recentActivity || [])
+    );
   }
 
-  private loadDashboardData(): void {
-    this.loading.set(true);
-    
-    this.dashboardService.getDashboardStats()
-      .pipe(
-        takeUntil(this.destroy$),
-        finalize(() => this.loading.set(false))
-      )
-      .subscribe({
-        next: stats => this.stats.set(stats),
-        error: error => {
-          console.error('Error loading dashboard stats:', error);
-          // Set default stats on error
-          this.stats.set({
-            totalCases: 0,
-            pendingCases: 0,
-            completedToday: 0,
-            overdueCases: 0
-          });
-        }
-      });
-  }
+  private async initializeData(): Promise<void> {
+    try {
+      this.isLoading = true;
 
-  private loadExpedientes(): void {
-    this.dashboardService.getExpedientesTypes()
-      .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: expedientes => {
-          this.expedientes.set(expedientes);
-          this.filteredExpedientes.set(expedientes);
+      // Verificar sesión y obtener usuario actual
+      const isValidSession = await this.processMakerService.validateSession();
+      if (!isValidSession) {
+        this.router.navigate(['/login']);
+        return;
+      }
+
+      // Cargar usuario actual
+      this.processMakerService.getCurrentUser().subscribe({
+        next: user => {
+          console.log('Usuario cargado:', user);
         },
         error: error => {
-          console.error('Error loading expedientes:', error);
-          this.expedientes.set([]);
-          this.filteredExpedientes.set([]);
+          console.error('Error cargando usuario:', error);
+          this.showError('Error al cargar información del usuario');
         }
       });
+
+    } catch (error) {
+      console.error('Error inicializando dashboard:', error);
+      this.showError('Error al inicializar el dashboard');
+    } finally {
+      this.isLoading = false;
+    }
   }
 
-  private loadRecentActivity(): void {
-    this.dashboardService.getRecentActivity()
+  private setupAutoRefresh(): void {
+    // Auto-refresh cada 5 minutos
+    timer(this.refreshInterval, this.refreshInterval)
       .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: activity => this.recentActivity.set(activity),
-        error: error => {
-          console.error('Error loading recent activity:', error);
-          this.recentActivity.set([]);
-        }
+      .subscribe(() => {
+        this.processMakerService.invalidateCasesCache();
       });
   }
 
-  onSearch(): void {
-    const term = this.searchTerm.toLowerCase().trim();
-    
-    if (!term) {
-      this.filteredExpedientes.set(this.expedientes());
-      return;
-    }
 
-    const filtered = this.expedientes().filter(exp =>
-      exp.name.toLowerCase().includes(term) ||
-      exp.description.toLowerCase().includes(term)
+
+  /**
+   * Navegación
+   */
+  navigateToAllCases(): void {
+    const pmUrl = this.dashboardService.getProcessMakerUrl('/workflow/cases/main');
+    window.open(pmUrl, '_blank');
+  }
+
+  navigateToMyCases(): void {
+    const pmUrl = this.dashboardService.getProcessMakerUrl('/workflow/cases/todo');
+    window.open(pmUrl, '_blank');
+  }
+
+  navigateToCompletedCases(): void {
+    const pmUrl = this.dashboardService.getProcessMakerUrl('/workflow/cases/sent');
+    window.open(pmUrl, '_blank');
+  }
+
+  navigateToOverdueCases(): void {
+    // Implementar vista de casos vencidos
+    this.showInfo('Vista de casos vencidos en desarrollo');
+  }
+
+  navigateToReports(): void {
+    // Implementar módulo de reportes
+    this.showInfo('Módulo de reportes en desarrollo');
+  }
+
+  navigateToCase(caseId?: string): void {
+    if (!caseId) return;
+
+    const pmUrl = this.dashboardService.getProcessMakerUrl(
+      `/workflow/cases/caseFrame?caseId=${caseId}&delIndex=1`
     );
-    
-    this.filteredExpedientes.set(filtered);
-  }
-
-  startExpediente(expediente: ExpedienteType): void {
-    if (!expediente.enabled) {
-      return;
-    }
-
-    console.log('Starting expediente:', expediente);
-    
-    // Por ahora solo redirigir a ProcessMaker
-    // En el futuro aquí se podría abrir un modal o iniciar el proceso
-    this.openProcessMaker();
-  }
-
-  refreshData(): void {
-    this.loadDashboardData();
-    this.loadRecentActivity();
-  }
-
-  refreshExpedientes(): void {
-    this.loadExpedientes();
+    window.open(pmUrl, '_blank');
   }
 
   openProcessMaker(): void {
-    const url = `${window.location.protocol}//${window.location.hostname}:${window.location.port}/sysOsplyfC`;
-    window.open(url, '_blank');
+    const pmUrl = this.dashboardService.getProcessMakerUrl('/workflow/main');
+    window.open(pmUrl, '_blank');
+  }
+
+  /**
+   * Acciones del usuario
+   */
+  refreshData(): void {
+    this.processMakerService.invalidateCasesCache();
+    this.showSuccess('Datos actualizados');
   }
 
   logout(): void {
-    this.authService.logout()
-      .pipe(takeUntil(this.destroy$))
-      .subscribe({
-        next: () => {
-          this.router.navigate(['/auth/login']);
-        },
-        error: error => {
-          console.error('Error during logout:', error);
-          // Even if logout fails, redirect to login
-          this.router.navigate(['/auth/login']);
-        }
-      });
+    if (confirm('¿Está seguro que desea cerrar sesión?')) {
+      this.processMakerService.logout();
+      this.router.navigate(['/login']);
+    }
   }
 
-  trackByExpediente(index: number, expediente: ExpedienteType): string {
-    return expediente.id;
+  /**
+   * Utilidades de UI
+   */
+  getCategoryColor(category: string): string {
+    const colors = {
+      medico: '#27ae60',
+      administrativo: '#3498db',
+      legal: '#c0392b',
+      facturacion: '#e67e22'
+    };
+    return colors[category as keyof typeof colors] || '#95a5a6';
+  }
+
+  getCategoryLabel(category: string): string {
+    const labels = {
+      medico: 'Médico',
+      administrativo: 'Administrativo',
+      legal: 'Legal',
+      facturacion: 'Facturación'
+    };
+    return labels[category as keyof typeof labels] || 'General';
+  }
+
+  formatTime(timestamp: Date): string {
+    const now = new Date();
+    const diff = now.getTime() - timestamp.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(minutes / 60);
+    const days = Math.floor(hours / 24);
+
+    if (days > 0) return `hace ${days} día${days > 1 ? 's' : ''}`;
+    if (hours > 0) return `hace ${hours} hora${hours > 1 ? 's' : ''}`;
+    if (minutes > 0) return `hace ${minutes} minuto${minutes > 1 ? 's' : ''}`;
+    return 'hace un momento';
+  }
+
+  trackActivity(index: number, activity: ActivityItem): string {
+    return activity.id;
+  }
+
+  /**
+   * Mensajes al usuario
+   */
+  private showSuccess(message: string): void {
+    this.snackBar.open(message, 'Cerrar', {
+      duration: 3000,
+      panelClass: ['success-snackbar']
+    });
+  }
+
+  private showError(message: string): void {
+    this.snackBar.open(message, 'Cerrar', {
+      duration: 5000,
+      panelClass: ['error-snackbar']
+    });
+  }
+
+  private showInfo(message: string): void {
+    this.snackBar.open(message, 'Cerrar', {
+      duration: 3000,
+      panelClass: ['info-snackbar']
+    });
   }
 }

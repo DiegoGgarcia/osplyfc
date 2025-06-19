@@ -1,209 +1,207 @@
-import { Component, effect, inject, signal } from '@angular/core';
+import { Component, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormBuilder, FormGroup, Validators, ReactiveFormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { MatCardModule } from '@angular/material/card';
-import { MatFormFieldModule } from '@angular/material/form-field';
-import { MatInputModule } from '@angular/material/input';
-import { MatButtonModule } from '@angular/material/button';
-import { MatIconModule } from '@angular/material/icon';
-import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
-import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
-import { finalize } from 'rxjs/operators';
+import { MatSnackBar } from '@angular/material/snack-bar';
 
 import { AuthService } from '../../../core/services/auth.service';
 
 @Component({
   selector: 'app-login',
   standalone: true,
-  imports: [
-    CommonModule,
-    ReactiveFormsModule,
-    MatCardModule,
-    MatFormFieldModule,
-    MatInputModule,
-    MatButtonModule,
-    MatIconModule,
-    MatProgressSpinnerModule,
-    MatSnackBarModule
-  ],
+  imports: [CommonModule, ReactiveFormsModule],
   template: `
-    <div class="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div class="max-w-md w-full space-y-8">
+    <div class="login-container">
+      <div class="login-card">
         
-        <!-- Logo and Title -->
-        <div class="text-center">
-          <mat-icon class="text-6xl text-blue-600 mb-4">local_hospital</mat-icon>
-          <h2 class="text-3xl font-extrabold text-gray-900">OsplyfC</h2>
-          <p class="mt-2 text-sm text-gray-600">Obra Social del Personal de Luz y Fuerza de Córdoba</p>
+        <!-- Header del Login -->
+        <div class="login-header">
+          <div class="login-logo">O</div>
+          <h1 class="login-title">OsplyfC</h1>
+          <p class="login-subtitle">Sistema de Gestión de Expedientes</p>
         </div>
 
-        <!-- Login Form -->
-        <mat-card class="p-8">
-          <mat-card-header class="text-center mb-6">
-            <mat-card-title>Iniciar Sesión</mat-card-title>
-            <mat-card-subtitle>Accede a tu dashboard de expedientes</mat-card-subtitle>
-          </mat-card-header>
+        <!-- Formulario de Login -->
+        <form [formGroup]="loginForm" (ngSubmit)="onSubmit()" class="login-form">
+          
+          <!-- Campo Usuario -->
+          <div class="form-group">
+            <label for="username">Usuario</label>
+            <input 
+              type="text" 
+              id="username"
+              formControlName="username"
+              placeholder="Ingrese su usuario"
+              [class.error]="loginForm.get('username')?.invalid && loginForm.get('username')?.touched"
+            >
+            <div 
+              *ngIf="loginForm.get('username')?.invalid && loginForm.get('username')?.touched"
+              class="error-message"
+            >
+              <span *ngIf="loginForm.get('username')?.hasError('required')">
+                El usuario es obligatorio
+              </span>
+            </div>
+          </div>
 
-          <mat-card-content>
-            <form [formGroup]="loginForm" (ngSubmit)="onSubmit()">
-              <div class="space-y-4">
-                
-                <!-- Username Field -->
-                <mat-form-field class="w-full" appearance="outline">
-                  <mat-label>Usuario</mat-label>
-                  <input 
-                    matInput 
-                    type="text"
-                    formControlName="username"
-                    placeholder="Ingrese su usuario"
-                    autocomplete="username"
-                  >
-                  <mat-icon matSuffix>person</mat-icon>
-                  <mat-error *ngIf="loginForm.get('username')?.hasError('required')">
-                    El usuario es requerido
-                  </mat-error>
-                </mat-form-field>
+          <!-- Campo Contraseña -->
+          <div class="form-group">
+            <label for="password">Contraseña</label>
+            <input 
+              type="password" 
+              id="password"
+              formControlName="password"
+              placeholder="Ingrese su contraseña"
+              [class.error]="loginForm.get('password')?.invalid && loginForm.get('password')?.touched"
+            >
+            <div 
+              *ngIf="loginForm.get('password')?.invalid && loginForm.get('password')?.touched"
+              class="error-message"
+            >
+              <span *ngIf="loginForm.get('password')?.hasError('required')">
+                La contraseña es obligatoria
+              </span>
+            </div>
+          </div>
 
-                <!-- Password Field -->
-                <mat-form-field class="w-full" appearance="outline">
-                  <mat-label>Contraseña</mat-label>
-                  <input 
-                    matInput 
-                    [type]="hidePassword() ? 'password' : 'text'"
-                    formControlName="password"
-                    placeholder="Ingrese su contraseña"
-                    autocomplete="current-password"
-                  >
-                  <button 
-                    mat-icon-button 
-                    matSuffix 
-                    type="button"
-                    (click)="togglePasswordVisibility()"
-                  >
-                    <mat-icon>{{ hidePassword() ? 'visibility' : 'visibility_off' }}</mat-icon>
-                  </button>
-                  <mat-error *ngIf="loginForm.get('password')?.hasError('required')">
-                    La contraseña es requerida
-                  </mat-error>
-                </mat-form-field>
+          <!-- Botón de Login -->
+          <button 
+            type="submit" 
+            class="login-btn"
+            [disabled]="loginForm.invalid || isLoading"
+          >
+            <span *ngIf="!isLoading" class="btn-content">
+              <i class="fas fa-sign-in-alt"></i>
+              Iniciar Sesión
+            </span>
+            <span *ngIf="isLoading" class="btn-content">
+              <div class="loading"></div>
+              Verificando...
+            </span>
+          </button>
 
-                <!-- Submit Button -->
-                <button 
-                  mat-raised-button 
-                  color="primary" 
-                  type="submit"
-                  class="w-full h-12"
-                  [disabled]="loginForm.invalid || loading()"
-                >
-                  <span *ngIf="!loading()">Iniciar Sesión</span>
-                  <mat-spinner *ngIf="loading()" diameter="20" class="mr-2"></mat-spinner>
-                  <span *ngIf="loading()">Iniciando sesión...</span>
-                </button>
+          <!-- Mensaje de Error -->
+          <div *ngIf="errorMessage" class="alert error">
+            <i class="fas fa-exclamation-triangle"></i>
+            {{ errorMessage }}
+          </div>
 
-              </div>
-            </form>
-          </mat-card-content>
-        </mat-card>
+        </form>
 
-        <!-- Footer -->
-        <div class="text-center text-sm text-gray-600">
-          <p>Sistema de Gestión de Expedientes</p>
-          <p class="mt-1">ProcessMaker v3.4.9 • OsplyfC Dashboard</p>
+        <!-- Footer del Login -->
+        <div class="login-footer">
+          <p class="version-info">
+            <i class="fas fa-info-circle"></i>
+            ProcessMaker 3.4.9 - OsplyfC v1.0
+          </p>
         </div>
 
       </div>
     </div>
-  `,
-  styles: [`
-    .mat-mdc-card {
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
-      border-radius: 12px;
-    }
-    
-    .mat-mdc-raised-button {
-      border-radius: 8px;
-      font-weight: 500;
-    }
-    
-    .mat-mdc-form-field {
-      width: 100%;
-    }
-  `]
+  `
 })
-export class LoginComponent {
+export class LoginComponent implements OnInit {
+  private readonly fb = inject(FormBuilder);
   private readonly authService = inject(AuthService);
   private readonly router = inject(Router);
-  private readonly formBuilder = inject(FormBuilder);
   private readonly snackBar = inject(MatSnackBar);
 
-  // Signals
-  loading = signal<boolean>(false);
-  hidePassword = signal<boolean>(true);
-
-  // Form
   loginForm: FormGroup;
+  isLoading = false;
+  errorMessage = '';
 
-constructor() {
-  this.loginForm = this.formBuilder.group({
-    username: ['', [Validators.required]],
-    password: ['', [Validators.required]]
-  });
-
-  // Escuchar cambios del estado de loading y deshabilitar/habilitar el formulario
-  effect(() => {
-    if (this.loading()) {
-      this.loginForm.disable();
-    } else {
-      this.loginForm.enable();
-    }
-  });
-}
-
-  onSubmit(): void {
-    if (this.loginForm.invalid || this.loading()) {
-      return;
-    }
-
-    const { username, password } = this.loginForm.value;
-    this.loading.set(true);
-
-    this.authService.login(username, password)
-      .pipe(
-        finalize(() => this.loading.set(false))
-      )
-      .subscribe({
-        next: (session) => {
-          this.snackBar.open(
-            `¡Bienvenido!`, 
-            'Cerrar', 
-            { duration: 3000, panelClass: ['success-snackbar'] }
-          );
-          this.router.navigate(['/dashboard']);
-        },
-        error: (error) => {
-          console.error('Login error:', error);
-          
-          let errorMessage = 'Error al iniciar sesión. Verifique sus credenciales.';
-          
-          if (error.status === 401) {
-            errorMessage = 'Usuario o contraseña incorrectos.';
-          } else if (error.status === 0) {
-            errorMessage = 'No se pudo conectar al servidor. Verifique su conexión.';
-          } else if (error.error?.message) {
-            errorMessage = error.error.message;
-          }
-
-          this.snackBar.open(
-            errorMessage, 
-            'Cerrar', 
-            { duration: 5000, panelClass: ['error-snackbar'] }
-          );
-        }
-      });
+  constructor() {
+    this.loginForm = this.fb.group({
+      username: ['', [Validators.required]],
+      password: ['', [Validators.required]]
+    });
   }
 
-  togglePasswordVisibility(): void {
-    this.hidePassword.set(!this.hidePassword());
+  ngOnInit(): void {
+    // Si ya está autenticado, redirigir al dashboard
+    if (this.authService.isAuthenticated()) {
+      this.router.navigate(['/dashboard']);
+    }
+
+    // Limpiar cualquier error al cambiar los campos
+    this.loginForm.valueChanges.subscribe(() => {
+      this.errorMessage = '';
+    });
+  }
+
+  async onSubmit(): Promise<void> {
+    if (this.loginForm.valid && !this.isLoading) {
+      this.isLoading = true;
+      this.errorMessage = '';
+
+      const { username, password } = this.loginForm.value;
+
+      try {
+        // Intentar login con ProcessMaker
+        const userSession = await this.authService.login(username, password).toPromise();
+        
+        if (userSession) {
+          // Login exitoso
+          this.snackBar.open('¡Bienvenido a OsplyfC!', 'Cerrar', {
+            duration: 3000,
+            panelClass: ['success-snackbar']
+          });
+
+          // Redirigir al dashboard
+          this.router.navigate(['/dashboard']);
+        } else {
+          this.showError('Credenciales inválidas');
+        }
+
+      } catch (error: any) {
+        console.error('Error en login:', error);
+        
+        // Manejar diferentes tipos de errores
+        if (error.status === 401) {
+          this.showError('Usuario o contraseña incorrectos');
+        } else if (error.status === 403) {
+          this.showError('No tiene permisos para acceder al sistema');
+        } else if (error.status === 0) {
+          this.showError('Error de conexión. Verifique su red.');
+        } else {
+          this.showError('Error del servidor. Intente nuevamente.');
+        }
+
+      } finally {
+        this.isLoading = false;
+      }
+    } else {
+      // Marcar todos los campos como touched para mostrar errores
+      this.markFormGroupTouched();
+    }
+  }
+
+  private showError(message: string): void {
+    this.errorMessage = message;
+    
+    // También mostrar en snackbar
+    this.snackBar.open(message, 'Cerrar', {
+      duration: 5000,
+      panelClass: ['error-snackbar']
+    });
+  }
+
+  private markFormGroupTouched(): void {
+    Object.keys(this.loginForm.controls).forEach(key => {
+      this.loginForm.get(key)?.markAsTouched();
+    });
+  }
+
+  // Método para testing y desarrollo
+  fillTestCredentials(): void {
+    this.loginForm.patchValue({
+      username: 'admin',
+      password: 'admin'
+    });
+  }
+
+  // Navegar a ayuda
+  goToHelp(): void {
+    window.open('/workflow/help', '_blank');
   }
 }

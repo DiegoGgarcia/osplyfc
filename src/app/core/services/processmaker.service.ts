@@ -1,33 +1,45 @@
-import { Injectable, inject } from '@angular/core';
-import { HttpClient, HttpHeaders, HttpParams } from '@angular/common/http';
-import { Observable, throwError } from 'rxjs';
-import { catchError, map } from 'rxjs/operators';
+import { Injectable } from '@angular/core';
+import { HttpClient, HttpHeaders, HttpParams, HttpErrorResponse } from '@angular/common/http';
+import { Observable, BehaviorSubject, throwError, of, timer, forkJoin } from 'rxjs';
+import { map, catchError, retry, shareReplay, switchMap, tap } from 'rxjs/operators';
 import { environment } from '../../../environments/environment';
 
-// Interfaces
+// Interfaces según la API real de ProcessMaker 3.4
+export interface ProcessMakerUser {
+  usr_uid: string;
+  usr_username: string;
+  usr_firstname: string;
+  usr_lastname: string;
+  usr_email: string;
+  dep_uid?: string;
+  dep_title?: string;
+  usr_department?: string;
+  usr_position?: string;
+}
+
 export interface ProcessMakerCase {
   app_uid: string;
   del_index: string;
   del_last_index: string;
   app_number: string;
-  app_status: string;
+  app_status: 'TO_DO' | 'DRAFT' | 'CANCELLED' | 'COMPLETED' | 'PAUSED';
   usr_uid: string;
   previous_usr_uid: string;
   tas_uid: string;
   pro_uid: string;
   del_delegate_date: string;
   del_init_date: string;
-  del_finish_date: string | null;
+  del_finish_date?: string;
   del_task_due_date: string;
   del_risk_date: string;
-  del_thread_status: string;
-  app_thread_status: string;
+  del_thread_status: 'OPEN' | 'CLOSED';
+  app_thread_status: 'OPEN' | 'CLOSED';
   app_title: string;
   app_pro_title: string;
   app_tas_title: string;
   app_current_user: string;
   app_del_previous_user: string;
-  del_priority: string;
+  del_priority: 'VERY_LOW' | 'LOW' | 'NORMAL' | 'HIGH' | 'VERY_HIGH';
   del_duration: string;
   del_queue_duration: string;
   del_delay_duration: string;
@@ -35,7 +47,7 @@ export interface ProcessMakerCase {
   del_finished: string;
   del_delayed: string;
   app_create_date: string;
-  app_finish_date: string | null;
+  app_finish_date?: string;
   app_update_date: string;
   app_overdue_percentage: string;
   usr_firstname: string;
@@ -46,6 +58,9 @@ export interface ProcessMakerCase {
   usrcr_usr_firstname: string;
   usrcr_usr_lastname: string;
   usrcr_usr_username: string;
+  previous_usr_firstname: string;
+  previous_usr_lastname: string;
+  previous_usr_username: string;
   app_status_label: string;
 }
 
@@ -53,350 +68,443 @@ export interface ProcessMakerProcess {
   pro_uid: string;
   pro_title: string;
   pro_description: string;
-  pro_parent: string;
-  pro_time: string;
-  pro_timeunit: string;
-  pro_status: string;
-  pro_type_day: string;
-  pro_type: string;
-  pro_assignment: string;
-  pro_show_map: number;
-  pro_show_message: number;
-  pro_subprocess: number;
-  pro_tri_deleted: string;
-  pro_tri_canceled: string;
-  pro_tri_paused: string;
-  pro_tri_reassigned: string;
-  pro_tri_unpaused: string;
-  pro_type_process: string;
-  pro_show_delegate: number;
-  pro_show_dynaform: number;
-  pro_category: string;
-  pro_sub_application: number;
-  pro_tri_open: string;
-  pro_tri_deleted2: string;
-  pro_tri_canceled2: string;
-  pro_tri_paused2: string;
-  pro_tri_reassigned2: string;
-  pro_tri_unpaused2: string;
-  pro_debug: number;
-  pro_dynaforms: any;
-  pro_derivation_screen_tpl: string;
-  pro_cost: number;
-  pro_unit_cost: string;
-  cat_uid: string;
-  pro_create_date: string;
-  pro_update_date: string;
-  pro_create_user: string;
-  pro_height: number;
-  pro_width: number;
-  pro_title_x: number;
-  pro_title_y: number;
-}
-
-export interface ProcessMakerTask {
   tas_uid: string;
-  pro_uid: string;
-  tas_type: string;
-  tas_duration: number;
-  tas_delay_type: string;
-  tas_temporizer: number;
-  tas_type_day: string;
-  tas_timeunit: string;
-  tas_alert: string;
-  tas_priority_variable: string;
-  tas_assign_type: string;
-  tas_assign_variable: string;
-  tas_group_variable: string;
-  tas_mi_instance_variable: string;
-  tas_mi_complete_variable: string;
-  tas_assign_location: string;
-  tas_assign_location_adhoc: string;
-  tas_transfer_fly: string;
-  tas_last_assigned: string;
-  tas_user: string;
-  tas_can_upload: string;
-  tas_view_upload: string;
-  tas_view_additional_documentation: string;
-  tas_start: string;
-  tas_to_last_user: string;
-  tas_send_last_email: string;
-  tas_derivation: string;
-  tas_posx: number;
-  tas_posy: number;
-  tas_width: number;
-  tas_height: number;
-  tas_color: string;
-  tas_evn_uid: string;
-  tas_boundary: string;
-  tas_routing_screen_tpl: string;
-  tas_selfservice_timeout: number;
-  tas_selfservice_time: number;
-  tas_selfservice_time_unit: string;
-  tas_selfservice_trigger_uid: string;
-  tas_selfservice_execution: string;
-  tas_not_email_from_format: number;
-  tas_offline: string;
-  tas_email_server_uid: string;
-  tas_auto_root: string;
-  tas_receive_server_uid: string;
-  tas_receive_last_email: string;
-  tas_receive_email_from_format: number;
-  tas_receive_message_type: string;
-  tas_receive_subject_message: string;
-  tas_receive_message: string;
-  tas_email_server_uid_execute_task: string;
-  tas_parent: string;
-  tas_block_routing: string;
-  tas_factory_method: string;
-  tas_interfaces_folder: string;
-  tas_pocket_book: string;
-  tas_generate_historical_dynaform: string;
-  tas_title: string;
-  tas_description: string;
-  tas_def_title: string;
-  tas_def_subject_message: string;
-  tas_def_proc_code: string;
-  tas_def_message: string;
-  tas_def_description: string;
+}
+export interface CaseStats {
+  total: number;
+  todo: number;
+  completed_today: number;
+  overdue: number;
+  by_status: Record<string, number>;
+  by_process: Record<string, number>;
 }
 
-export interface StartCaseRequest {
-  processUid: string;
-  taskUid: string;
-  variables?: { [key: string]: any };
+export interface LoginResponse {
+  access_token: string;
+  expires_in: number;
+  token_type: string;
+  scope: string;
+  refresh_token: string;
+}
+
+export interface ApiError {
+  error: {
+    type: string;
+    message: string;
+    code: number;
+  };
 }
 
 @Injectable({
   providedIn: 'root'
 })
-export class ProcessmakerService {
-  private readonly http = inject(HttpClient);
-  
-  private get baseUrl(): string {
-    return environment.processMakerUrl;
+export class ProcessMakerService {
+  private readonly baseUrl = `${environment.processMakerUrl}/api/1.0/${environment.workspace}`;
+  private readonly retryAttempts = 3;
+  private readonly cacheTimeout = 5 * 60 * 1000; // 5 minutos
+
+  // Observables con cache
+  private userSubject = new BehaviorSubject<ProcessMakerUser | null>(null);
+  public user$ = this.userSubject.asObservable();
+
+  private authTokenSubject = new BehaviorSubject<string | null>(null);
+  public authToken$ = this.authTokenSubject.asObservable();
+
+  // Cache para procesos y casos
+  private processesCache$ = timer(0, this.cacheTimeout).pipe(
+    switchMap(() => this.loadProcesses()),
+    shareReplay(1)
+  );
+
+  private casesCache$ = timer(0, this.cacheTimeout).pipe(
+    switchMap(() => this.loadCases()),
+    shareReplay(1)
+  );
+
+  constructor(private http: HttpClient) {
+    this.initializeAuth();
   }
-  
-  private get workspace(): string {
-    return environment.workspace;
+
+  private initializeAuth(): void {
+    const token = localStorage.getItem('pm_token');
+    if (token) {
+      this.authTokenSubject.next(token);
+    }
   }
-  
-  private buildApiUrl(endpoint: string): string {
-    return `${this.baseUrl}/api/1.0/${this.workspace}${endpoint}`;
-  }
-  
-  private getHttpHeaders(): HttpHeaders {
-    return new HttpHeaders({
+
+  private get defaultHeaders(): HttpHeaders {
+    const token = this.authTokenSubject.value;
+    let headers = new HttpHeaders({
       'Content-Type': 'application/json',
       'Accept': 'application/json'
     });
-  }
-  
-  /**
-   * Obtiene casos pendientes (TO DO)
-   */
-  getCasesTodo(): Observable<ProcessMakerCase[]> {
-    const url = this.buildApiUrl('/cases/todo');
-    return this.http.get<any>(url, { headers: this.getHttpHeaders() }).pipe(
-      map(response => response.data || response),
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene casos enviados/completados
-   */
-  getCasesSent(): Observable<ProcessMakerCase[]> {
-    const url = this.buildApiUrl('/cases/sent');
-    return this.http.get<any>(url, { headers: this.getHttpHeaders() }).pipe(
-      map(response => response.data || response),
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene todos los casos
-   */
-  getCases(): Observable<ProcessMakerCase[]> {
-    const url = this.buildApiUrl('/cases');
-    return this.http.get<any>(url, { headers: this.getHttpHeaders() }).pipe(
-      map(response => response.data || response),
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene casos por proceso específico
-   */
-  getCasesByProcess(processUid: string): Observable<ProcessMakerCase[]> {
-    const url = this.buildApiUrl('/cases/advanced-search/paged');
-    const params = new HttpParams()
-      .set('pro_uid', processUid)
-      .set('start', '0')
-      .set('limit', '200');
     
-    return this.http.get<any>(url, { 
-      headers: this.getHttpHeaders(),
-      params: params 
-    }).pipe(
-      map(response => response.data || response),
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene información de un caso específico
-   */
-  getCase(caseUid: string): Observable<ProcessMakerCase> {
-    const url = this.buildApiUrl(`/cases/${caseUid}`);
-    return this.http.get<ProcessMakerCase>(url, { headers: this.getHttpHeaders() }).pipe(
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene todos los procesos disponibles
-   */
-  getProcesses(): Observable<ProcessMakerProcess[]> {
-    const url = this.buildApiUrl('/processes');
-    return this.http.get<any>(url, { headers: this.getHttpHeaders() }).pipe(
-      map(response => response.data || response),
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene información de un proceso específico
-   */
-  getProcess(processUid: string): Observable<ProcessMakerProcess> {
-    const url = this.buildApiUrl(`/processes/${processUid}`);
-    return this.http.get<ProcessMakerProcess>(url, { headers: this.getHttpHeaders() }).pipe(
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene tareas de un proceso
-   */
-  getProcessTasks(processUid: string): Observable<ProcessMakerTask[]> {
-    const url = this.buildApiUrl(`/processes/${processUid}/tasks`);
-    return this.http.get<any>(url, { headers: this.getHttpHeaders() }).pipe(
-      map(response => response.data || response),
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Inicia un nuevo caso
-   */
-  startCase(request: StartCaseRequest): Observable<any> {
-    const url = this.buildApiUrl(`/processes/${request.processUid}/cases`);
-    const body = {
-      variables: request.variables || {}
-    };
-    
-    return this.http.post<any>(url, body, { headers: this.getHttpHeaders() }).pipe(
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Rutea un caso a la siguiente tarea
-   */
-  routeCase(caseUid: string, delIndex: string): Observable<any> {
-    const url = this.buildApiUrl(`/cases/${caseUid}/route-case`);
-    const body = {
-      del_index: delIndex
-    };
-    
-    return this.http.put<any>(url, body, { headers: this.getHttpHeaders() }).pipe(
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Actualiza variables de un caso
-   */
-  updateCaseVariables(caseUid: string, variables: { [key: string]: any }): Observable<any> {
-    const url = this.buildApiUrl(`/cases/${caseUid}/variables`);
-    
-    return this.http.put<any>(url, variables, { headers: this.getHttpHeaders() }).pipe(
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene variables de un caso
-   */
-  getCaseVariables(caseUid: string): Observable<{ [key: string]: any }> {
-    const url = this.buildApiUrl(`/cases/${caseUid}/variables`);
-    
-    return this.http.get<{ [key: string]: any }>(url, { headers: this.getHttpHeaders() }).pipe(
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene usuarios del sistema
-   */
-  getUsers(): Observable<any[]> {
-    const url = this.buildApiUrl('/users');
-    return this.http.get<any>(url, { headers: this.getHttpHeaders() }).pipe(
-      map(response => response.data || response),
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene información de un usuario específico
-   */
-  getUser(userUid: string): Observable<any> {
-    const url = this.buildApiUrl(`/users/${userUid}`);
-    return this.http.get<any>(url, { headers: this.getHttpHeaders() }).pipe(
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene departamentos
-   */
-  getDepartments(): Observable<any[]> {
-    const url = this.buildApiUrl('/departments');
-    return this.http.get<any>(url, { headers: this.getHttpHeaders() }).pipe(
-      map(response => response.data || response),
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Obtiene grupos
-   */
-  getGroups(): Observable<any[]> {
-    const url = this.buildApiUrl('/groups');
-    return this.http.get<any>(url, { headers: this.getHttpHeaders() }).pipe(
-      map(response => response.data || response),
-      catchError(this.handleError)
-    );
-  }
-  
-  /**
-   * Manejo de errores
-   */
-  private handleError(error: any): Observable<never> {
-    console.error('Error en ProcessMaker Service:', error);
-    let errorMessage = 'Error desconocido';
-    
-    if (error.error instanceof ErrorEvent) {
-      // Error del lado del cliente
-      errorMessage = `Error: ${error.error.message}`;
-    } else {
-      // Error del lado del servidor
-      errorMessage = `Código de error: ${error.status}\nMensaje: ${error.message}`;
-      if (error.error && error.error.message) {
-        errorMessage += `\nDetalle: ${error.error.message}`;
-      }
+    if (token) {
+      headers = headers.set('Authorization', `Bearer ${token}`);
     }
     
+    return headers;
+  }
+
+  private handleError = (error: HttpErrorResponse): Observable<never> => {
+    console.error('ProcessMaker API Error:', error);
+    
+    if (error.status === 401) {
+      this.logout();
+      return throwError(() => new Error('Sesión expirada. Por favor, inicie sesión nuevamente.'));
+    }
+    
+    if (error.status === 404) {
+      return throwError(() => new Error('Endpoint no encontrado. Verificar configuración de API.'));
+    }
+    
+    if (error.status === 0) {
+      return throwError(() => new Error('Error de conexión. Verificar servidor ProcessMaker.'));
+    }
+    
+    const errorMessage = error.error?.error?.message || error.message || 'Error desconocido';
     return throwError(() => new Error(errorMessage));
+  };
+
+  /**
+   * Autenticación usando /login (PM 3.4 compatible)
+   */
+  login(username: string, password: string): Observable<LoginResponse> {
+    const body = {
+      username,
+      password,
+      grant_type: 'password'
+    };
+
+    return this.http.post<LoginResponse>(`${this.baseUrl}/login`, body, {
+      headers: new HttpHeaders({
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      })
+    }).pipe(
+      tap(response => {
+        this.authTokenSubject.next(response.access_token);
+        localStorage.setItem('pm_token', response.access_token);
+      }),
+      retry(this.retryAttempts),
+      catchError(this.handleError)
+    );
+  }
+
+  /**
+   * Obtener información del usuario actual usando /cases para extraer datos del usuario
+   * Ya que /light no existe en PM 3.4
+   */
+  getCurrentUser(): Observable<ProcessMakerUser> {
+    return this.getAllCases().pipe(
+      map(cases => {
+        if (cases.length > 0) {
+          const firstCase = cases[0];
+          return {
+            usr_uid: firstCase.usr_uid,
+            usr_username: firstCase.usr_username,
+            usr_firstname: firstCase.usr_firstname,
+            usr_lastname: firstCase.usr_lastname,
+            usr_email: '', // No disponible en /cases
+            dep_title: firstCase.app_current_user.split(' ')[0] || 'Usuario',
+            usr_department: this.extractDepartmentFromUser(firstCase.usr_username)
+          };
+        } else {
+          // Usuario por defecto si no hay casos
+          return {
+            usr_uid: 'current_user',
+            usr_username: 'usuario_sistema',
+            usr_firstname: 'Usuario',
+            usr_lastname: 'Sistema',
+            usr_email: '',
+            dep_title: 'OsplyfC',
+            usr_department: 'Sistema'
+          };
+        }
+      }),
+      tap(user => this.userSubject.next(user)),
+      retry(this.retryAttempts),
+      catchError(error => {
+        console.warn('No se pudo obtener usuario actual:', error);
+        // Usuario por defecto en caso de error
+        const defaultUser: ProcessMakerUser = {
+          usr_uid: 'default_user',
+          usr_username: 'usuario_osplyfc',
+          usr_firstname: 'Usuario',
+          usr_lastname: 'OsplyfC',
+          usr_email: '',
+          dep_title: 'Mesa de Entrada',
+          usr_department: 'Mesa de Entrada'
+        };
+        this.userSubject.next(defaultUser);
+        return of(defaultUser);
+      })
+    );
+  }
+
+  private extractDepartmentFromUser(username: string): string {
+    if (username.includes('mesa_entrada')) return 'Mesa de Entrada';
+    if (username.includes('cab')) return 'CAB';
+    if (username.includes('auditor_medico')) return 'Auditoría Médica';
+    if (username.includes('auditor_odonto')) return 'Auditoría Odontológica';
+    if (username.includes('auditor_salud')) return 'Auditoría Salud Mental';
+    if (username.includes('facturacion')) return 'Facturación';
+    if (username.includes('legales')) return 'Legales';
+    return 'Sistema';
+  }
+
+  /**
+   * Verificar estado de la sesión
+   */
+  async validateSession(): Promise<boolean> {
+    try {
+      // Intentar obtener casos para validar sesión
+      await this.http.get(`${this.baseUrl}/cases`, {
+        headers: this.defaultHeaders
+      }).toPromise();
+      return true;
+    } catch (error) {
+      console.warn('Sesión inválida:', error);
+      this.logout();
+      return false;
+    }
+  }
+
+  /**
+   * Obtener todos los casos del usuario (único endpoint disponible en PM 3.4)
+   */
+  getAllCases(): Observable<ProcessMakerCase[]> {
+    return this.http.get<ProcessMakerCase[]>(`${this.baseUrl}/cases`, {
+      headers: this.defaultHeaders
+    }).pipe(
+      retry(this.retryAttempts),
+      catchError(this.handleError)
+    );
+  }
+
+  /**
+   * Obtener casos pendientes (filtrados desde todos los casos)
+   */
+  getTodoCases(): Observable<ProcessMakerCase[]> {
+    return this.getAllCases().pipe(
+      map(cases => cases.filter(c => c.app_status === 'TO_DO'))
+    );
+  }
+
+  /**
+   * Obtener casos completados/enviados (filtrados desde todos los casos)
+   */
+  getSentCases(): Observable<ProcessMakerCase[]> {
+    return this.getAllCases().pipe(
+      map(cases => cases.filter(c => c.app_status === 'COMPLETED'))
+    );
+  }
+
+  /**
+   * Obtener estadísticas de casos procesando todos los casos
+   */
+  getCaseStats(): Observable<CaseStats> {
+    return this.getAllCases().pipe(
+      map(cases => {
+        const today = new Date().toISOString().split('T')[0];
+        const now = new Date();
+
+        const stats: CaseStats = {
+          total: cases.length,
+          todo: cases.filter(c => c.app_status === 'TO_DO').length,
+          completed_today: cases.filter(c => 
+            c.app_finish_date && c.app_finish_date.startsWith(today)
+          ).length,
+          overdue: cases.filter(c => {
+            const dueDate = new Date(c.del_task_due_date);
+            return c.app_status === 'TO_DO' && dueDate < now;
+          }).length,
+          by_status: {},
+          by_process: {}
+        };
+
+        // Estadísticas por estado
+        cases.forEach(c => {
+          stats.by_status[c.app_status] = (stats.by_status[c.app_status] || 0) + 1;
+          stats.by_process[c.app_pro_title] = (stats.by_process[c.app_pro_title] || 0) + 1;
+        });
+
+        return stats;
+      })
+    );
+  }
+
+  /**
+   * Obtener procesos disponibles
+   */
+  getProcesses(): Observable<ProcessMakerProcess[]> {
+    return this.processesCache$;
+  }
+
+private loadProcesses(): Observable<ProcessMakerProcess[]> {
+  const headers = new HttpHeaders().set('Authorization', `Bearer ${this.authTokenSubject.value}`);
+  
+  return this.http.get<any[]>(`${this.baseUrl}/case/start-cases`, { headers }).pipe(
+    switchMap((cases) => {
+      const enriched$ = cases.map(item => {
+        return this.http.get<any>(`${this.baseUrl}/project/${item.pro_uid}`, { headers }).pipe(
+          map(project => ({
+            pro_uid: item.pro_uid,
+            pro_title: item.pro_title,
+            pro_description: project.prj_description,
+            tas_uid: item.tas_uid
+          }))
+        );
+      });
+      return enriched$.length > 0 ? forkJoin(enriched$) : of([]);
+    }),
+    catchError(error => {
+      console.error('Error loading processes:', error);
+      return of([]);
+    })
+  );
+}
+
+  private loadCases(): Observable<ProcessMakerCase[]> {
+    return this.getAllCases();
+  }
+
+  /**
+   * Iniciar un nuevo caso
+   */
+  startCase(processId: string, variables?: Record<string, any>): Observable<any> {
+    const body = variables || {};
+    
+    return this.http.post(`${this.baseUrl}/processes/${processId}/cases`, body, {
+      headers: this.defaultHeaders
+    }).pipe(
+      retry(this.retryAttempts),
+      catchError(this.handleError)
+    );
+  }
+
+  /**
+   * Obtener detalles de un caso específico
+   */
+  getCase(caseId: string): Observable<ProcessMakerCase> {
+    return this.http.get<ProcessMakerCase>(`${this.baseUrl}/cases/${caseId}`, {
+      headers: this.defaultHeaders
+    }).pipe(
+      retry(this.retryAttempts),
+      catchError(this.handleError)
+    );
+  }
+
+  /**
+   * Obtener variables de un caso
+   */
+  getCaseVariables(caseId: string): Observable<Record<string, any>> {
+    return this.http.get<Record<string, any>>(`${this.baseUrl}/cases/${caseId}/variables`, {
+      headers: this.defaultHeaders
+    }).pipe(
+      retry(this.retryAttempts),
+      catchError(this.handleError)
+    );
+  }
+
+  /**
+   * Actualizar variables de un caso
+   */
+  updateCaseVariables(caseId: string, variables: Record<string, any>): Observable<any> {
+    return this.http.put(`${this.baseUrl}/cases/${caseId}/variables`, variables, {
+      headers: this.defaultHeaders
+    }).pipe(
+      retry(this.retryAttempts),
+      catchError(this.handleError)
+    );
+  }
+
+  /**
+   * Derivar un caso
+   */
+  routeCase(caseId: string, taskId: string, userId?: string): Observable<any> {
+    const body: any = {};
+    if (userId) {
+      body.usr_uid = userId;
+    }
+
+    return this.http.post(`${this.baseUrl}/cases/${caseId}/route`, body, {
+      headers: this.defaultHeaders
+    }).pipe(
+      retry(this.retryAttempts),
+      catchError(this.handleError)
+    );
+  }
+
+  /**
+   * Cerrar sesión
+   */
+  logout(): void {
+    this.authTokenSubject.next(null);
+    this.userSubject.next(null);
+    localStorage.removeItem('pm_token');
+  }
+
+  /**
+   * Verificar si el usuario está autenticado
+   */
+  isAuthenticated(): boolean {
+    return !!this.authTokenSubject.value;
+  }
+
+  /**
+   * Obtener el token actual
+   */
+  getAuthToken(): string | null {
+    return this.authTokenSubject.value;
+  }
+
+  /**
+   * Utilidad para construir URLs de API
+   */
+  buildApiUrl(endpoint: string, workspace?: string): string {
+    const ws = workspace || environment.workspace;
+    return `${environment.processMakerUrl}/api/1.0/${ws}${endpoint}`;
+  }
+
+  /**
+   * Obtener casos con cache
+   */
+  getCasesFromCache(): Observable<ProcessMakerCase[]> {
+    return this.casesCache$;
+  }
+
+  /**
+   * Invalidar cache de casos
+   */
+  invalidateCasesCache(): void {
+    this.casesCache$ = timer(0, this.cacheTimeout).pipe(
+      switchMap(() => this.loadCases()),
+      shareReplay(1)
+    );
+  }
+
+  /**
+   * Método para testing y debugging
+   */
+  testConnection(): Observable<any> {
+    return this.http.get(`${this.baseUrl}/cases`, {
+      headers: this.defaultHeaders
+    }).pipe(
+      map(response => ({
+        success: true,
+        message: 'Conexión exitosa con ProcessMaker',
+        endpoint: `${this.baseUrl}/cases`,
+        timestamp: new Date().toISOString(),
+        data: response
+      })),
+      catchError(error => of({
+        success: false,
+        message: 'Error de conexión con ProcessMaker',
+        endpoint: `${this.baseUrl}/cases`,
+        timestamp: new Date().toISOString(),
+        error: error.message
+      }))
+    );
   }
 }

@@ -1,351 +1,298 @@
-import { Injectable, inject } from '@angular/core';
-import { HttpClient } from '@angular/common/http';
-import { Observable, BehaviorSubject, of, forkJoin } from 'rxjs';
-import { map, catchError, tap, switchMap } from 'rxjs/operators';
-import { environment } from '../../../environments/environment';
-import { ProcessmakerService } from './processmaker.service';
+import { Injectable } from '@angular/core';
+import { Observable, combineLatest, map, catchError, of } from 'rxjs';
+import { ProcessMakerService, CaseStats, ProcessMakerCase, ProcessMakerProcess } from './processmaker.service';
 
-// Interfaces
 export interface DashboardStats {
   totalCases: number;
-  pendingCases: number;
+  myCases: number;
   completedToday: number;
   overdueCases: number;
+  recentActivity: ActivityItem[];
+  expedienteStats: Record<string, number>;
 }
 
-export interface ExpedienteStats {
-  total: number;
-  pendientes: number;
-  procesados: number;
-}
-
-export interface RecentActivity {
+export interface ActivityItem {
   id: string;
-  type: string;
+  type: 'case_started' | 'case_completed' | 'case_assigned' | 'case_overdue';
+  title: string;
   description: string;
-  date: Date;
-  status: string;
+  timestamp: Date;
+  caseId?: string;
+  processName?: string;
+  userName?: string;
+  icon: string;
+  color: string;
 }
 
-export interface ExpedienteType {
+export interface ExpedienteConfig {
   id: string;
-  name: string;
+  title: string;
   description: string;
   icon: string;
   color: string;
-  processUid: string;
-  enabled: boolean;
 }
 
 @Injectable({
   providedIn: 'root'
 })
 export class DashboardService {
-  private readonly http = inject(HttpClient);
-  private readonly processmakerService = inject(ProcessmakerService);
+
   
-  private readonly n8nBaseUrl = environment.n8nApiUrl;
-  
-  private statsSubject = new BehaviorSubject<DashboardStats>({
-    totalCases: 0,
-    pendingCases: 0,
-    completedToday: 0,
-    overdueCases: 0
-  });
-  
-  public stats$ = this.statsSubject.asObservable();
-  
+  constructor(private processMakerService: ProcessMakerService) {}
+
   /**
-   * Obtiene estadísticas del dashboard
+   * Obtener estadísticas completas del dashboard
    */
-  getDashboardStats(): Observable<DashboardStats> {
-    // Primero intentar desde N8N (si está disponible)
-    return this.getStatsFromN8N().pipe(
-      catchError(() => {
-        // Si N8N falla, usar ProcessMaker directamente
-        return this.getStatsFromProcessMaker();
+getDashboardStats(): Observable<DashboardStats> {
+  return combineLatest([
+    this.processMakerService.getCaseStats(),
+    this.processMakerService.getAllCases(),
+    this.processMakerService.getProcesses()
+  ]).pipe(
+map(([caseStats, allCases, _processes]) => {
+  const recentActivity = this.generateRecentActivity(allCases);
+
+  return {
+    totalCases: caseStats.total,
+    myCases: caseStats.todo,
+    completedToday: caseStats.completed_today,
+    overdueCases: caseStats.overdue,
+    recentActivity,
+    expedienteStats: caseStats.by_process
+  };
+}),
+    catchError(error => {
+      console.error('Error obteniendo estadísticas del dashboard:', error);
+      return of({
+        totalCases: 0,
+        myCases: 0,
+        completedToday: 0,
+        overdueCases: 0,
+        recentActivity: [],
+        expedienteStats: {}
+      });
+    })
+  );
+}
+
+
+  /**
+   * Obtener casos recientes del usuario
+   */
+  getRecentCases(limit: number = 10): Observable<ProcessMakerCase[]> {
+    return this.processMakerService.getAllCases().pipe(
+      map(cases => {
+        return cases
+          .sort((a, b) => new Date(b.app_update_date).getTime() - new Date(a.app_update_date).getTime())
+          .slice(0, limit);
       }),
-      tap(stats => this.statsSubject.next(stats))
-    );
-  }
-  
-  /**
-   * Obtiene estadísticas desde N8N
-   */
-  private getStatsFromN8N(): Observable<DashboardStats> {
-    return this.http.get<any>(`${this.n8nBaseUrl}/osplyfc/stats`).pipe(
-      map(response => {
-        const stats = response.data || response;
-        return {
-          totalCases: stats.total || 0,
-          pendingCases: stats.todo || 0,
-          completedToday: stats.completed || 0,
-          overdueCases: stats.overdue || 0
-        };
+      catchError(error => {
+        console.error('Error obteniendo casos recientes:', error);
+        return of([]);
       })
     );
   }
-  
+
   /**
-   * Obtiene estadísticas directamente desde ProcessMaker
+   * Obtener estadísticas por categoría de expediente
    */
-  private getStatsFromProcessMaker(): Observable<DashboardStats> {
-    return forkJoin({
-      todos: this.processmakerService.getCasesTodo(),
-      sent: this.processmakerService.getCasesSent()
-    }).pipe(
-      map(({ todos, sent }) => {
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        
-        const completedToday = sent.filter(case_ => {
-          if (case_.app_finish_date) {
-            const finishDate = new Date(case_.app_finish_date);
-            finishDate.setHours(0, 0, 0, 0);
-            return finishDate.getTime() === today.getTime();
-          }
-          return false;
-        }).length;
-        
-        const overdueCases = todos.filter(case_ => {
-          if (case_.del_task_due_date) {
-            const dueDate = new Date(case_.del_task_due_date);
-            return dueDate < new Date();
-          }
-          return false;
-        }).length;
-        
-        return {
-          totalCases: todos.length + sent.length,
-          pendingCases: todos.length,
-          completedToday: completedToday,
-          overdueCases: overdueCases
+  getStatsByCategory(): Observable<Record<string, number>> {
+    return this.processMakerService.getAllCases().pipe(
+      map(cases => {
+        const statsByCategory: Record<string, number> = {
+          medico: 0,
+          administrativo: 0,
+          legal: 0,
+          facturacion: 0
         };
-      })
-    );
-  }
-  
-  /**
-   * Obtiene actividad reciente
-   */
-  getRecentActivity(): Observable<RecentActivity[]> {
-    return this.processmakerService.getCasesTodo().pipe(
-      map(cases => cases.slice(0, 10).map(pmCase => ({
-        id: pmCase.app_uid,
-        type: 'Caso asignado',
-        description: `${pmCase.app_pro_title} - ${pmCase.app_tas_title}`,
-        date: new Date(pmCase.del_delegate_date),
-        status: pmCase.app_status
-      })))
-    );
-  }
-  
-  /**
-   * Obtiene estadísticas de un expediente específico
-   */
-  getExpedienteStats(tipo: string): Observable<ExpedienteStats> {
-    const processUid = this.getProcessUidByType(tipo);
-    if (!processUid) {
-      return of({ total: 0, pendientes: 0, procesados: 0 });
-    }
-    
-    return this.processmakerService.getCasesByProcess(processUid).pipe(
-      map(cases => ({
-        total: cases.length,
-        pendientes: cases.filter(c => c.app_status === 'TO_DO').length,
-        procesados: cases.filter(c => c.app_status === 'COMPLETED').length
-      }))
-    );
-  }
-  
-  /**
-   * Inicia un nuevo caso de un tipo específico
-   */
-  startExpediente(tipo: string, data?: any): Observable<any> {
-    const processUid = this.getProcessUidByType(tipo);
-    if (!processUid) {
-      throw new Error(`Proceso no encontrado para tipo: ${tipo}`);
-    }
-    
-    return this.processmakerService.getProcessTasks(processUid).pipe(
-      switchMap(tasks => {
-        const firstTask = tasks.find(task => task.tas_type === 'NORMAL') || tasks[0];
-        if (!firstTask) {
-          throw new Error('No se encontró tarea inicial');
-        }
-        
-        return this.processmakerService.startCase({
-          processUid: processUid,
-          taskUid: firstTask.tas_uid,
-          variables: data || {}
+
+        cases.forEach(caso => {
+          // Determinar categoría basada en el título del proceso
+          const processTitle = caso.app_pro_title.toLowerCase();
+          
+          if (this.isMedicoProcess(processTitle)) {
+            statsByCategory['medico']++;
+          } else if (this.isAdministrativoProcess(processTitle)) {
+            statsByCategory['administrativo']++;
+          } else if (this.isLegalProcess(processTitle)) {
+            statsByCategory['legal']++;
+          } else if (this.isFacturacionProcess(processTitle)) {
+            statsByCategory['facturacion']++;
+          }
+        });
+
+        return statsByCategory;
+      }),
+      catchError(error => {
+        console.error('Error obteniendo estadísticas por categoría:', error);
+        return of({
+          medico: 0,
+          administrativo: 0,
+          legal: 0,
+          facturacion: 0
         });
       })
     );
   }
-  
+
   /**
-   * Obtiene los tipos de expedientes disponibles
+   * Generar actividad reciente basada en los casos
    */
-  getExpedientesTypes(): Observable<ExpedienteType[]> {
-    // Por ahora devolvemos los tipos estáticos
-    return of(this.getStaticExpedientesTypes());
+  private generateRecentActivity(cases: ProcessMakerCase[]): ActivityItem[] {
+    const activities: ActivityItem[] = [];
+    const now = new Date();
+    const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+    // Casos iniciados recientemente
+    const recentCases = cases
+      .filter(c => new Date(c.app_create_date) > last24Hours)
+      .sort((a, b) => new Date(b.app_create_date).getTime() - new Date(a.app_create_date).getTime())
+      .slice(0, 5);
+
+    recentCases.forEach(caso => {
+      activities.push({
+        id: `started_${caso.app_uid}`,
+        type: 'case_started',
+        title: 'Nuevo expediente iniciado',
+        description: `${caso.app_pro_title} - ${caso.app_title}`,
+        timestamp: new Date(caso.app_create_date),
+        caseId: caso.app_uid,
+        processName: caso.app_pro_title,
+        userName: `${caso.usrcr_usr_firstname} ${caso.usrcr_usr_lastname}`,
+        icon: 'fas fa-play-circle',
+        color: '#27ae60'
+      });
+    });
+
+    // Casos completados recientemente
+    const completedCases = cases
+      .filter(c => c.app_finish_date && new Date(c.app_finish_date) > last24Hours)
+      .sort((a, b) => new Date(b.app_finish_date!).getTime() - new Date(a.app_finish_date!).getTime())
+      .slice(0, 3);
+
+    completedCases.forEach(caso => {
+      activities.push({
+        id: `completed_${caso.app_uid}`,
+        type: 'case_completed',
+        title: 'Expediente completado',
+        description: `${caso.app_pro_title} - ${caso.app_title}`,
+        timestamp: new Date(caso.app_finish_date!),
+        caseId: caso.app_uid,
+        processName: caso.app_pro_title,
+        userName: `${caso.usr_firstname} ${caso.usr_lastname}`,
+        icon: 'fas fa-check-circle',
+        color: '#8e44ad'
+      });
+    });
+
+    // Casos vencidos
+    const overdueCases = cases
+      .filter(c => {
+        const dueDate = new Date(c.del_task_due_date);
+        return c.app_status === 'TO_DO' && dueDate < now;
+      })
+      .slice(0, 3);
+
+    overdueCases.forEach(caso => {
+      activities.push({
+        id: `overdue_${caso.app_uid}`,
+        type: 'case_overdue',
+        title: 'Expediente vencido',
+        description: `${caso.app_pro_title} - ${caso.app_title}`,
+        timestamp: new Date(caso.del_task_due_date),
+        caseId: caso.app_uid,
+        processName: caso.app_pro_title,
+        userName: `${caso.usr_firstname} ${caso.usr_lastname}`,
+        icon: 'fas fa-exclamation-triangle',
+        color: '#e74c3c'
+      });
+    });
+
+    // Ordenar por timestamp descendente
+    return activities
+      .sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime())
+      .slice(0, 10);
   }
-  
+
+
+
+
   /**
-   * Filtra expedientes por término de búsqueda
+   * Métodos auxiliares para clasificar procesos por categoría
    */
-  filterExpedientes(searchTerm: string): Observable<ExpedienteType[]> {
-    return this.getExpedientesTypes().pipe(
-      map(expedientes => 
-        expedientes.filter(exp => 
-          exp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          exp.description.toLowerCase().includes(searchTerm.toLowerCase())
-        )
-      )
+  private isMedicoProcess(processTitle: string): boolean {
+    return ['autorización', 'autorizacion', 'reintegro', 'sur', 'medicación', 
+            'presupuesto', 'discapacidad'].some(keyword => processTitle.includes(keyword));
+  }
+
+  private isAdministrativoProcess(processTitle: string): boolean {
+    return ['legajo', 'correspondencia', 'nota', 'despacho', 'correo'].some(keyword => 
+            processTitle.includes(keyword));
+  }
+
+  private isLegalProcess(processTitle: string): boolean {
+    return ['carta documento', 'legal', 'amparo', 'judicial'].some(keyword => 
+            processTitle.includes(keyword));
+  }
+
+  private isFacturacionProcess(processTitle: string): boolean {
+    return ['factura', 'hospital público', 'facturación'].some(keyword => 
+            processTitle.includes(keyword));
+  }
+
+
+  /**
+   * Obtener URL de redirección para ProcessMaker
+   */
+  getProcessMakerUrl(path: string = ''): string {
+    const baseUrl = this.processMakerService.buildApiUrl('').replace('/api/1.0/OsplyfC', '');
+    return `${baseUrl}${path}`;
+  }
+
+  /**
+   * Obtener métricas de rendimiento
+   */
+  getPerformanceMetrics(): Observable<any> {
+    return this.processMakerService.getAllCases().pipe(
+      map(cases => {
+        const now = new Date();
+        const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+        const casesLast7Days = cases.filter(c => new Date(c.app_create_date) > last7Days);
+        const casesLast30Days = cases.filter(c => new Date(c.app_create_date) > last30Days);
+
+        // Calcular tiempo promedio de resolución
+        const completedCases = cases.filter(c => c.app_finish_date);
+        const avgResolutionTime = completedCases.length > 0 ? 
+          completedCases.reduce((sum, c) => {
+            const start = new Date(c.app_create_date);
+            const end = new Date(c.app_finish_date!);
+            return sum + (end.getTime() - start.getTime());
+          }, 0) / completedCases.length / (1000 * 60 * 60) // en horas
+          : 0;
+
+        return {
+          totalCases: cases.length,
+          casesLast7Days: casesLast7Days.length,
+          casesLast30Days: casesLast30Days.length,
+          avgResolutionTimeHours: Math.round(avgResolutionTime * 100) / 100,
+          completionRate: cases.length > 0 ? 
+            (completedCases.length / cases.length) * 100 : 0,
+          currentLoad: cases.filter(c => c.app_status === 'TO_DO').length
+        };
+      }),
+      catchError(error => {
+        console.error('Error obteniendo métricas de rendimiento:', error);
+        return of({
+          totalCases: 0,
+          casesLast7Days: 0,
+          casesLast30Days: 0,
+          avgResolutionTimeHours: 0,
+          completionRate: 0,
+          currentLoad: 0
+        });
+      })
     );
-  }
-  
-  /**
-   * Obtiene el UID del proceso según el tipo de expediente
-   */
-  private getProcessUidByType(tipo: string): string | null {
-    const expediente = this.getStaticExpedientesTypes().find(
-      exp => exp.id === tipo
-    );
-    return expediente?.processUid || null;
-  }
-  
-  /**
-   * Obtiene los tipos de expedientes estáticos
-   */
-  private getStaticExpedientesTypes(): ExpedienteType[] {
-    return [
-      {
-        id: 'autorizacion',
-        name: 'Autorización',
-        description: 'Pedido de medicamentos, materiales de osteosíntesis, sondas, alimentación enteral',
-        icon: 'medical_services',
-        color: 'green',
-        processUid: '889460391684499d86eaac1030656952', // UID real del proceso de autorización
-        enabled: true
-      },
-      {
-        id: 'correspondencia',
-        name: 'Correspondencia Varios',
-        description: 'Pedidos de recetarios, órdenes médicas, insumos para enfermería',
-        icon: 'mail',
-        color: 'blue',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'legajo',
-        name: 'Legajo',
-        description: 'Documentación para empleados: certificados médicos, embarazo, ausencias',
-        icon: 'folder_shared',
-        color: 'amber',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'factura_medica',
-        name: 'Factura Médica',
-        description: 'Clínicas, sanatorios, hospitales públicos, prestaciones no SUR',
-        icon: 'receipt',
-        color: 'orange',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'factura_proveedores',
-        name: 'Factura Proveedores',
-        description: 'Servicios e insumos generales: limpieza, librería, electrónica',
-        icon: 'business',
-        color: 'red',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'reintegros',
-        name: 'Reintegros',
-        description: 'Prestaciones médicas, odontológicas, medicamentos fuera de red',
-        icon: 'account_balance',
-        color: 'purple',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'sur_medicacion',
-        name: 'SUR Medicación',
-        description: 'Medicamentos gestionados bajo el Sistema Único de Reintegros',
-        icon: 'medication',
-        color: 'indigo',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'carta_documento',
-        name: 'Carta Documento',
-        description: 'Documentación legal urgente: avisos judiciales, cartas documento',
-        icon: 'gavel',
-        color: 'red',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'nota',
-        name: 'Nota',
-        description: 'Coberturas, afiliaciones, oficios judiciales, cédulas, amparos',
-        icon: 'note',
-        color: 'brown',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'presupuestos',
-        name: 'Presupuestos',
-        description: 'Prestaciones médicas no convenidas previamente',
-        icon: 'calculate',
-        color: 'deep_orange',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'hospitales_publicos',
-        name: 'Hospitales Públicos',
-        description: 'Facturación de prestaciones realizadas en hospitales públicos',
-        icon: 'local_hospital',
-        color: 'teal',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'despachos',
-        name: 'Despachos',
-        description: 'Envío de órdenes médicas, documentación general a delegaciones',
-        icon: 'local_shipping',
-        color: 'cyan',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'carpeta_discapacidad',
-        name: 'Carpeta de Discapacidad',
-        description: 'Facturas descargadas y renombradas para revisión de Junta de Discapacidad',
-        icon: 'accessibility',
-        color: 'deep_purple',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      },
-      {
-        id: 'correo_argentino',
-        name: 'Solicitudes de Correo Argentino',
-        description: 'Complementa el flujo de Cartas Documento y otros envíos físicos',
-        icon: 'local_post_office',
-        color: 'blue_grey',
-        processUid: '', // Pendiente de implementar
-        enabled: false
-      }
-    ];
   }
 }

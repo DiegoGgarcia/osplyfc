@@ -1,0 +1,188 @@
+<div class="dashboard-container">
+  <!-- Header -->
+  <mat-toolbar class="dashboard-header">
+    <div class="header-content">
+      <div class="logo-section">
+        <mat-icon class="logo-icon">business</mat-icon>
+        <div class="logo-text">
+          <h1>OsplyfC</h1>
+          <p>Sistema de Gestión de Expedientes</p>
+        </div>
+      </div>
+
+      <div class="user-section" *ngIf="currentUser$ | async as user">
+        <div class="user-info">
+          <span class="user-name">{{user.usr_firstname}} {{user.usr_lastname}}</span>
+          <span class="user-department">{{user.dep_title}}</span>
+        </div>
+        <button mat-icon-button (click)="logout()" matTooltip="Cerrar sesión">
+          <mat-icon>logout</mat-icon>
+        </button>
+      </div>
+    </div>
+  </mat-toolbar>
+
+  <!-- Stats Cards -->
+  <div class="stats-section">
+    <mat-grid-list cols="4" rowHeight="120px" gutterSize="20px">
+      <mat-grid-tile>
+        <mat-card class="stat-card" (click)="navigateToAllCases()">
+          <div class="stat-content">
+            <div class="stat-icon total-cases">
+              <mat-icon>folder_open</mat-icon>
+            </div>
+            <div class="stat-info">
+              <h3>{{(dashboardStats$ | async)?.totalCases || 0}}</h3>
+              <p>Casos Totales</p>
+            </div>
+          </div>
+        </mat-card>
+      </mat-grid-tile>
+
+      <mat-grid-tile>
+        <mat-card class="stat-card" (click)="navigateToMyCases()">
+          <div class="stat-content">
+            <div class="stat-icon my-cases">
+              <mat-icon>assignment</mat-icon>
+            </div>
+            <div class="stat-info">
+              <h3>{{(dashboardStats$ | async)?.myCases || 0}}</h3>
+              <p>Mis Casos Pendientes</p>
+            </div>
+          </div>
+        </mat-card>
+      </mat-grid-tile>
+
+      <mat-grid-tile>
+        <mat-card class="stat-card" (click)="navigateToCompletedCases()">
+          <div class="stat-content">
+            <div class="stat-icon completed-cases">
+              <mat-icon>check_circle</mat-icon>
+            </div>
+            <div class="stat-info">
+              <h3>{{(dashboardStats$ | async)?.completedToday || 0}}</h3>
+              <p>Completados Hoy</p>
+            </div>
+          </div>
+        </mat-card>
+      </mat-grid-tile>
+
+      <mat-grid-tile>
+        <mat-card class="stat-card overdue" (click)="navigateToOverdueCases()">
+          <div class="stat-content">
+            <div class="stat-icon overdue-cases">
+              <mat-icon>warning</mat-icon>
+            </div>
+            <div class="stat-info">
+              <h3>{{(dashboardStats$ | async)?.overdueCases || 0}}</h3>
+              <p>Casos Vencidos</p>
+            </div>
+          </div>
+        </mat-card>
+      </mat-grid-tile>
+    </mat-grid-list>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main-content">
+    <!-- Expedientes Grid -->
+    <div class="expedientes-section">
+      <mat-card>
+        <mat-card-header>
+          <mat-card-title>
+            Expedientes Disponibles
+          </mat-card-title>
+        </mat-card-header>
+
+        <mat-card-content>
+          <div class="expedientes-grid" *ngIf="availableExpedientes$ | async as expedientes">
+            <div class="expediente-card" *ngFor="let exp of expedientes">
+              <mat-card>
+                <mat-card-title>{{ exp.title }}</mat-card-title>
+                <mat-card-subtitle>{{ exp.description }}</mat-card-subtitle>
+                <mat-card-actions>
+                  <button mat-raised-button color="primary" >
+                    Iniciar
+                  </button>
+                </mat-card-actions>
+              </mat-card>
+            </div>
+          </div>
+
+          <div *ngIf="isLoading" class="loading-container">
+            <mat-spinner diameter="40"></mat-spinner>
+            <p>Cargando expedientes disponibles...</p>
+          </div>
+        </mat-card-content>
+      </mat-card>
+    </div>
+
+    <!-- Sidebar -->
+    <div class="sidebar">
+      <!-- Actividad Reciente -->
+      <mat-card class="activity-card">
+        <mat-card-header>
+          <mat-card-title>
+            <mat-icon>history</mat-icon>
+            Actividad Reciente
+          </mat-card-title>
+        </mat-card-header>
+
+        <mat-card-content>
+          <div class="activity-list" *ngIf="recentActivity$ | async as activities">
+            <div *ngFor="let activity of activities; trackBy: trackActivity" class="activity-item"
+              (click)="navigateToCase(activity.caseId)">
+              <div class="activity-icon" [style.color]="activity.color">
+                <i [class]="activity.icon"></i>
+              </div>
+              <div class="activity-content">
+                <h5>{{activity.title}}</h5>
+                <p>{{activity.description}}</p>
+                <span class="activity-time">{{formatTime(activity.timestamp)}}</span>
+              </div>
+            </div>
+
+            <div *ngIf="activities.length === 0" class="no-activity">
+              <mat-icon>inbox</mat-icon>
+              <p>No hay actividad reciente</p>
+            </div>
+          </div>
+        </mat-card-content>
+      </mat-card>
+
+      <!-- Acciones Rápidas -->
+      <mat-card class="quick-actions-card">
+        <mat-card-header>
+          <mat-card-title>
+            <mat-icon>flash_on</mat-icon>
+            Acciones Rápidas
+          </mat-card-title>
+        </mat-card-header>
+
+        <mat-card-content>
+          <div class="quick-actions">
+            <button mat-raised-button color="primary" (click)="navigateToMyCases()">
+              <mat-icon>inbox</mat-icon>
+              Mi Bandeja
+            </button>
+
+            <button mat-raised-button (click)="navigateToReports()">
+              <mat-icon>bar_chart</mat-icon>
+              Reportes
+            </button>
+
+            <button mat-raised-button (click)="refreshData()">
+              <mat-icon>refresh</mat-icon>
+              Actualizar
+            </button>
+
+            <button mat-raised-button (click)="openProcessMaker()">
+              <mat-icon>open_in_new</mat-icon>
+              ProcessMaker
+            </button>
+          </div>
+        </mat-card-content>
+      </mat-card>
+    </div>
+  </div>
+</div>
