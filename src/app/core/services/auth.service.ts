@@ -5,13 +5,6 @@ import { catchError, map, tap } from 'rxjs/operators';
 import { environment } from '../../../environments/environment';
 
 // Interfaces
-export interface OAuthResponse {
-  access_token: string;
-  expires_in: number;
-  token_type: string;
-  scope: string;
-  refresh_token: string;
-}
 
 export interface ProcessMakerUser {
   USR_UID: string;
@@ -84,54 +77,44 @@ export class AuthService {
   }
   
   /**
-   * Realiza login con OAuth 2.0
+   * Realiza login usando endpoints session-based de ProcessMaker 3.4
    */
   login(username: string, password: string): Observable<UserSession> {
-    const tokenUrl = `${environment.processMakerUrl}/${environment.workspace}/oauth2/token`;
-    
+    const url = `${environment.processMakerUrl}${environment.processMakerEndpoints.auth.login.replace('{workspace}', environment.workspace)}`;
+
     const body = {
-      grant_type: environment.oauth.grantType,
-      scope: environment.oauth.scope,
-      client_id: environment.oauth.clientId,
-      client_secret: environment.oauth.clientSecret,
-      username: username,
-      password: password
+      usr_username: username,
+      usr_password: password
     };
-    
+
     const headers = new HttpHeaders({
       'Content-Type': 'application/json',
       'Accept': 'application/json'
     });
-    
-    return this.http.post<OAuthResponse>(tokenUrl, body, { headers }).pipe(
-      tap(response => {
-        const expiresAt = Date.now() + (response.expires_in * 1000);
-        this.storeToken(response.access_token, expiresAt);
-        this.tokenSubject.next(response.access_token);
-      }),
+
+    return this.http.post<any>(url, body, { headers, withCredentials: true }).pipe(
       map(response => {
-        // Para OAuth 2.0, necesitamos obtener los datos del usuario por separado
-        return this.getCurrentUser().pipe(
-          map(userData => {
-            const session: UserSession = {
-              user: userData.user,
-              permissions: userData.permissions,
-              token: response.access_token,
-              expiresAt: Date.now() + (response.expires_in * 1000)
-            };
-            
-            this.storeUserSession(session);
-            this.currentUserSubject.next(userData.user);
-            
-            return session;
-          })
-        );
+        const expires = response.expires_in ? response.expires_in * 1000 : 3600 * 1000;
+        const expiresAt = Date.now() + expires;
+        const session: UserSession = {
+          user: response.user,
+          permissions: this.extractPermissions(response.user),
+          token: response.access_token,
+          expiresAt
+        };
+
+        this.storeToken(response.access_token, expiresAt);
+        this.storeUserSession(session);
+        this.tokenSubject.next(response.access_token);
+        this.currentUserSubject.next(response.user);
+
+        return session;
       }),
       catchError(error => {
         console.error('Error en login:', error);
         return throwError(() => error);
       })
-    ) as any;
+    );
   }
   
   /**
@@ -143,7 +126,7 @@ export class AuthService {
       return throwError(() => new Error('No token available'));
     }
     
-    const userUrl = `${environment.processMakerUrl}/api/1.0/${environment.workspace}/user`;
+    const userUrl = `${environment.processMakerUrl}${environment.processMakerEndpoints.auth.user.replace('{workspace}', environment.workspace)}`;
     
     const headers = new HttpHeaders({
       'Authorization': `Bearer ${token}`,
@@ -175,14 +158,14 @@ export class AuthService {
       return of(true);
     }
     
-    const revokeUrl = `${environment.processMakerUrl}/${environment.workspace}/oauth2/revoke`;
-    
+    const revokeUrl = `${environment.processMakerUrl}${environment.processMakerEndpoints.auth.logout.replace('{workspace}', environment.workspace)}`;
+
     const headers = new HttpHeaders({
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json'
     });
-    
-    return this.http.post(revokeUrl, { token }, { headers }).pipe(
+
+    return this.http.post(revokeUrl, {}, { headers, withCredentials: true }).pipe(
       map(() => true),
       catchError(() => of(true)) // Siempre consideramos exitoso el logout local
     );
